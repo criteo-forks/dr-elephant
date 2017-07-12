@@ -116,6 +116,7 @@ public class InfoExtractor {
     } else if ( data instanceof SparkApplicationData) {
       properties = retrieveSparkProperties((SparkApplicationData) data);
     }
+
     Scheduler scheduler = getSchedulerInstance(data.getAppId(), properties);
 
     if (scheduler == null) {
