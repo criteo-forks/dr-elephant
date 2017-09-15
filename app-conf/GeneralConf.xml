@@ -45,4 +45,15 @@
     <name>drelephant.analysis.fetch.initial.windowMillis</name>
     <value>3600000</value>
   </property> -->
+  <property>
+    <name>drelephant.analysis.retention.period</name>
+    <value>30</value>
+    <description>Number of days of analysis to be kept in the database</description>
+  </property>
+  <property>
+    <name>drelephant.analysis.purge.operation.interval</name>
+    <value>86400</value>
+    <description>Interval between purge operations in seconds</description>
+  </property>
+
 </configuration>

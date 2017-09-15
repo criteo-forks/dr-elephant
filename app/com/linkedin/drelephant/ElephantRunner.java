@@ -17,28 +17,26 @@
 package com.linkedin.drelephant;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
-
 import com.linkedin.drelephant.analysis.AnalyticJob;
 import com.linkedin.drelephant.analysis.AnalyticJobGenerator;
+import com.linkedin.drelephant.analysis.AnalyticJobGeneratorHadoop2;
 import com.linkedin.drelephant.analysis.HDFSContext;
 import com.linkedin.drelephant.analysis.HadoopSystemContext;
-import com.linkedin.drelephant.analysis.AnalyticJobGeneratorHadoop2;
-
+import com.linkedin.drelephant.purge.AppResultPurger;
 import com.linkedin.drelephant.security.HadoopSecurity;
-
+import com.linkedin.drelephant.util.Utils;
 import controllers.MetricsController;
 import java.io.IOException;
 import java.security.PrivilegedAction;
 import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-
-import com.linkedin.drelephant.util.Utils;
 import models.AppResult;
-
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.log4j.Logger;
@@ -57,6 +55,9 @@ public class ElephantRunner implements Runnable {
   private static final String FETCH_INTERVAL_KEY = "drelephant.analysis.fetch.interval";
   private static final String RETRY_INTERVAL_KEY = "drelephant.analysis.retry.interval";
   private static final String EXECUTOR_NUM_KEY = "drelephant.analysis.thread.count";
+  private static final String RETENTION_PERIOD_DAY_KEY = "drelephant.analysis.purge.retention.period";
+  private static final String PURGE_INTERVAL_SECOND_KEY = "drelephant.analysis.purge.interval";
+  private static final String PURGE_BATCH_SIZE_KEY = "drelephant.analysis.purge.batch.size";
 
   private AtomicBoolean _running = new AtomicBoolean(true);
   private long lastRun;
@@ -66,6 +67,8 @@ public class ElephantRunner implements Runnable {
   private HadoopSecurity _hadoopSecurity;
   private ThreadPoolExecutor _threadPoolExecutor;
   private AnalyticJobGenerator _analyticJobGenerator;
+
+  private ScheduledExecutorService _purgeScheduler;
 
   private void loadGeneralConfiguration() {
     Configuration configuration = ElephantContext.instance().getGeneralConf();
@@ -93,6 +96,9 @@ public class ElephantRunner implements Runnable {
   @Override
   public void run() {
     logger.info("Dr.elephant has started");
+
+    setupAppResultPurge();
+
     try {
       _hadoopSecurity = HadoopSecurity.getInstance();
       _hadoopSecurity.doAs(new PrivilegedAction<Void>() {
@@ -110,6 +116,7 @@ public class ElephantRunner implements Runnable {
           if (_executorNum < 1) {
             throw new RuntimeException("Must have at least 1 worker thread.");
           }
+
           ThreadFactory factory = new ThreadFactoryBuilder().setNameFormat("dr-el-executor-thread-%d").build();
           _threadPoolExecutor = new ThreadPoolExecutor(_executorNum, _executorNum, 0L, TimeUnit.MILLISECONDS,
                   new LinkedBlockingQueue<Runnable>(), factory);
@@ -158,6 +165,28 @@ public class ElephantRunner implements Runnable {
       logger.error(e.getMessage());
       logger.error(ExceptionUtils.getStackTrace(e));
     }
+  }
+
+  private void setupAppResultPurge() {
+
+    Configuration configuration = ElephantContext.instance().getGeneralConf();
+
+    final int retentionPeriodDay = Utils.getNonNegativeInt(configuration, RETENTION_PERIOD_DAY_KEY, 0);
+    final long purgeIntervalSecond = Utils.getNonNegativeLong(configuration, PURGE_INTERVAL_SECOND_KEY, 86400);//By default, do it every day
+    final int purgeBatchSize = Utils.getNonNegativeInt(configuration, PURGE_BATCH_SIZE_KEY, 100);
+
+    if (retentionPeriodDay > 0) {
+      _purgeScheduler = new ScheduledThreadPoolExecutor(1);
+      //Start purge with a little delay allowing application start
+      _purgeScheduler.scheduleAtFixedRate(new Runnable() {
+        @Override
+        public void run() {AppResultPurger.deleteOlderThan(retentionPeriodDay, purgeBatchSize);}
+
+      }, 60, purgeIntervalSecond, TimeUnit.SECONDS);
+
+      logger.info("Purge scheduled to remove results of jobs older than " + retentionPeriodDay + " days every " + purgeIntervalSecond + " seconds");
+    }
+
   }
 
   private class ExecutorJob implements Runnable {

@@ -39,6 +39,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.security.authentication.client.AuthenticatedURL;
 import org.apache.hadoop.security.authentication.client.AuthenticationException;
 import org.apache.log4j.Logger;
@@ -60,7 +61,7 @@ public class MapReduceFetcherHadoop2 extends MapReduceFetcher {
   public MapReduceFetcherHadoop2(FetcherConfigurationData fetcherConfData) throws IOException {
     super(fetcherConfData);
 
-    final String jhistoryAddr = new Configuration().get("mapreduce.jobhistory.webapp.address");
+    final String jhistoryAddr = new JobConf().get("mapreduce.jobhistory.webapp.address");
 
     logger.info("Connecting to the job history server at " + jhistoryAddr + "...");
     _urlFactory = new URLFactory(jhistoryAddr);
