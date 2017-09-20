@@ -53,16 +53,23 @@ public class ElephantRunner implements Runnable {
   private static final long FETCH_INTERVAL = 60 * 1000;     // Interval between fetches
   private static final long RETRY_INTERVAL = 60 * 1000;     // Interval between retries
   private static final int EXECUTOR_NUM = 5;                // The number of executor threads to analyse the jobs
+  private static final int PURGE_BATCH_SIZE = 10000;        // Batch size of purge operation to enforce retention period
 
   private static final String FETCH_INTERVAL_KEY = "drelephant.analysis.fetch.interval";
   private static final String RETRY_INTERVAL_KEY = "drelephant.analysis.retry.interval";
   private static final String EXECUTOR_NUM_KEY = "drelephant.analysis.thread.count";
+  private static final String RETENTION_PERIOD_KEY = "drelephant.analysis.retention.period";
+  private static final String PURGE_BATCH_SIZE_KEY = "drelephant.analysis.purge.batch.size";
+  private static final String PURGE_OPERATION_INTERVAL_KEY = "drelephant.analysis.purge.operation.interval";
 
   private AtomicBoolean _running = new AtomicBoolean(true);
   private long lastRun;
   private long _fetchInterval;
   private long _retryInterval;
   private int _executorNum;
+  private int _retentionPeriod;
+  private int _purgeBatchSize;
+  private long _purgeOperationInterval;
   private HadoopSecurity _hadoopSecurity;
   private ThreadPoolExecutor _threadPoolExecutor;
   private AnalyticJobGenerator _analyticJobGenerator;
@@ -73,6 +80,17 @@ public class ElephantRunner implements Runnable {
     _executorNum = Utils.getNonNegativeInt(configuration, EXECUTOR_NUM_KEY, EXECUTOR_NUM);
     _fetchInterval = Utils.getNonNegativeLong(configuration, FETCH_INTERVAL_KEY, FETCH_INTERVAL);
     _retryInterval = Utils.getNonNegativeLong(configuration, RETRY_INTERVAL_KEY, RETRY_INTERVAL);
+
+    if (Utils.isSet(RETENTION_PERIOD_KEY)) {
+      _retentionPeriod = configuration.getInt(RETENTION_PERIOD_KEY, 0);
+      if (_retentionPeriod < 0) {
+        logger.error("Retention period was set incorrectly; needs to be a positive value.");
+      } else {
+        _purgeBatchSize = Utils.getNonNegativeInt(configuration, PURGE_BATCH_SIZE_KEY, PURGE_BATCH_SIZE);
+        // By default, purge old data at the same rate that it's added
+        _purgeOperationInterval = Utils.getNonNegativeLong(configuration, PURGE_OPERATION_INTERVAL_KEY, _fetchInterval);
+      }
+    }
   }
 
   private void loadAnalyticJobGenerator() {
@@ -110,6 +128,12 @@ public class ElephantRunner implements Runnable {
           if (_executorNum < 1) {
             throw new RuntimeException("Must have at least 1 worker thread.");
           }
+
+          if (_retentionPeriod > 0) {
+            new Thread(new PurgeExecutorJob()).start();
+            logger.info("Purger thread initiated");
+          }
+
           ThreadFactory factory = new ThreadFactoryBuilder().setNameFormat("dr-el-executor-thread-%d").build();
           _threadPoolExecutor = new ThreadPoolExecutor(_executorNum, _executorNum, 0L, TimeUnit.MILLISECONDS,
                   new LinkedBlockingQueue<Runnable>(), factory);
@@ -201,6 +225,33 @@ public class ElephantRunner implements Runnable {
                     + _analyticJob.getAppId() + "].");
           }
         }
+      }
+    }
+  }
+
+  private class PurgeExecutorJob implements Runnable {
+
+    @Override
+    public void run() {
+      try {
+        while (_running.get() && !Thread.currentThread().isInterrupted()) {
+          int deletedRecords;
+          do {
+            deletedRecords = AppResult.deleteOlderThan(_retentionPeriod, _purgeBatchSize);
+            logger.info("Purged " + deletedRecords + " older than " + _retentionPeriod + " from the database");
+          } while (deletedRecords > 0);
+
+          Thread.sleep(_purgeOperationInterval);
+        }
+      } catch(InterruptedException e){
+        logger.info("Purger thread interrupted");
+        logger.info(e.getMessage());
+        logger.info(ExceptionUtils.getStackTrace(e));
+
+        Thread.currentThread().interrupt();
+      } catch(Exception e){
+        logger.error(e.getMessage());
+        logger.error(ExceptionUtils.getStackTrace(e));
       }
     }
   }
