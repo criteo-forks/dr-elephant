@@ -16,17 +16,16 @@
 
 package com.linkedin.drelephant.spark.heuristics
 
-import com.linkedin.drelephant.spark.fetchers.statusapiv1.ExecutorSummary
-import scala.collection.JavaConverters
-import scala.concurrent.duration
-import scala.concurrent.duration.Duration
-
-import com.linkedin.drelephant.analysis.{Heuristic, HeuristicResult, HeuristicResultDetails, Severity, SeverityThresholds}
+import com.linkedin.drelephant.analysis._
 import com.linkedin.drelephant.configurations.heuristic.HeuristicConfigurationData
 import com.linkedin.drelephant.math.Statistics
 import com.linkedin.drelephant.spark.data.SparkApplicationData
-import com.linkedin.drelephant.spark.fetchers.statusapiv1.StageData
+import com.linkedin.drelephant.spark.fetchers.statusapiv1.{ExecutorSummary, StageData}
 import org.apache.spark.status.api.v1.StageStatus
+
+import scala.collection.JavaConverters
+import scala.concurrent.duration
+import scala.concurrent.duration.Duration
 
 
 /**
@@ -38,6 +37,7 @@ import org.apache.spark.status.api.v1.StageStatus
 class StagesHeuristic(private val heuristicConfigurationData: HeuristicConfigurationData)
     extends Heuristic[SparkApplicationData] {
   import StagesHeuristic._
+
   import JavaConverters._
 
   val stageFailureRateSeverityThresholds: SeverityThresholds =
@@ -52,6 +52,15 @@ class StagesHeuristic(private val heuristicConfigurationData: HeuristicConfigura
     SeverityThresholds.parse(heuristicConfigurationData.getParamMap.get(STAGE_RUNTIME_MINUTES_SEVERITY_THRESHOLDS_KEY), ascending = true)
       .map(minutesSeverityThresholdsToMillisSeverityThresholds)
       .getOrElse(DEFAULT_STAGE_RUNTIME_MILLIS_SEVERITY_THRESHOLDS)
+
+  val taskSerializationTimeProportionSeverityThresholds: SeverityThresholds =
+    SeverityThresholds.parse(heuristicConfigurationData.getParamMap.get(TASK_SERIALIZATION_TIME_PROPORTION_SEVERITY_THRESHOLDS_KEY), ascending = true)
+      .getOrElse(DEFAULT_TASK_SERIALIZATION_TIME_PROPORTION_SEVERITY_THRESHOLDS)
+
+  val taskDeserializationTimeProportionSeverityThresholds: SeverityThresholds =
+    SeverityThresholds.parse(heuristicConfigurationData.getParamMap.get(TASK_DESERIALIZATION_TIME_PROPORTION_SEVERITY_THRESHOLDS_KEY), ascending = true)
+      .getOrElse(DEFAULT_TASK_DESERIALIZATION_TIME_PROPORTION_SEVERITY_THRESHOLDS)
+
 
   override def getHeuristicConfData(): HeuristicConfigurationData = heuristicConfigurationData
 
@@ -117,10 +126,31 @@ object StagesHeuristic {
     ascending = true
   )
 
+  /** The default severity thresholds for the proportion of a task's run time spent on serialization. */
+  val DEFAULT_TASK_SERIALIZATION_TIME_PROPORTION_SEVERITY_THRESHOLDS = SeverityThresholds(
+    low = 1e-4,
+    moderate = 1e-3,
+    severe = 1e-2,
+    critical = 1e-1,
+    ascending = true
+  )
+
+
+  /** The default severity thresholds for the proportion of a task's run time spent on deserialization. */
+  val DEFAULT_TASK_DESERIALIZATION_TIME_PROPORTION_SEVERITY_THRESHOLDS = SeverityThresholds(
+    low = 1e-4,
+    moderate = 1e-3,
+    severe = 1e-2,
+    critical = 1e-1,
+    ascending = true
+  )
+
   val STAGE_FAILURE_RATE_SEVERITY_THRESHOLDS_KEY = "stage_failure_rate_severity_thresholds"
   val TASK_FAILURE_RATE_SEVERITY_THRESHOLDS_KEY = "stage_task_failure_rate_severity_thresholds"
   val STAGE_RUNTIME_MINUTES_SEVERITY_THRESHOLDS_KEY = "stage_runtime_minutes_severity_thresholds"
 
+  val TASK_SERIALIZATION_TIME_PROPORTION_SEVERITY_THRESHOLDS_KEY = "task_serialization_time_severity_thresholds"
+  val TASK_DESERIALIZATION_TIME_PROPORTION_SEVERITY_THRESHOLDS_KEY = "task_deserialization_time_severity_thresholds"
   val SPARK_EXECUTOR_INSTANCES_KEY = "spark.executor.instances"
 
   class Evaluator(stagesHeuristic: StagesHeuristic, data: SparkApplicationData) {
@@ -147,13 +177,17 @@ object StagesHeuristic {
       stagesAndAverageExecutorRuntimeSeverities
         .collect { case (stageData, runtime, severity) if severity.getValue > Severity.MODERATE.getValue => (stageData, runtime) }
 
-    lazy val severity: Severity = Severity.max((stageFailureRateSeverity +: (taskFailureRateSeverities ++ runtimeSeverities)): _*)
+    lazy val severity: Severity = Severity.max((stageFailureRateSeverity +: (taskFailureRateSeverities ++ runtimeSeverities ++ taskSerializationTimeProportionSeverities ++ taskDeserializationTimeProportionSeverities)): _*)
 
     private lazy val stageFailureRateSeverityThresholds = stagesHeuristic.stageFailureRateSeverityThresholds
 
     private lazy val taskFailureRateSeverityThresholds = stagesHeuristic.taskFailureRateSeverityThresholds
 
     private lazy val stageRuntimeMillisSeverityThresholds = stagesHeuristic.stageRuntimeMillisSeverityThresholds
+
+    private lazy val taskSerializationTimeProportionSeverityThresholds: SeverityThresholds = stagesHeuristic.taskSerializationTimeProportionSeverityThresholds
+
+    private lazy val taskDeserializationTimeProportionSeverityThresholds: SeverityThresholds = stagesHeuristic.taskDeserializationTimeProportionSeverityThresholds
 
     private lazy val stageFailureRateSeverity: Severity =
       stageFailureRateSeverityThresholds.severityOf(stageFailureRate.getOrElse[Double](0.0D))
@@ -178,6 +212,18 @@ object StagesHeuristic {
 
     private lazy val executorInstances: Int =
       appConfigurationProperties.get(SPARK_EXECUTOR_INSTANCES_KEY).map(_.toInt).getOrElse(executorSummaries.size)
+
+    private lazy val taskSerDeSerTimeProportionSeverities: Seq[(Severity, Severity)] = for {
+      stageData <- stageDatas
+      tasks <- stageData.tasks.toIterable
+      value <- tasks.values
+      metrics <- value.taskMetrics
+      serProportion = taskSerializationTimeProportionSeverityThresholds.severityOf(metrics.resultSerializationTime / metrics.executorRunTime.toFloat)
+      deserProportion = taskDeserializationTimeProportionSeverityThresholds.severityOf(metrics.executorDeserializeTime / metrics.executorRunTime.toFloat)
+    } yield (serProportion, deserProportion)
+
+    private lazy val taskSerializationTimeProportionSeverities: Seq[Severity] = taskSerDeSerTimeProportionSeverities.map(_._1)
+    private lazy val taskDeserializationTimeProportionSeverities: Seq[Severity] = taskSerDeSerTimeProportionSeverities.map(_._2)
 
     private def taskFailureRateAndSeverityOf(stageData: StageData): (Double, Severity) = {
       val taskFailureRate = taskFailureRateOf(stageData).getOrElse(0.0D)
