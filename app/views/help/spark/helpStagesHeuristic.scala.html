@@ -18,3 +18,13 @@ each stage, and long average executor runtimes for each stage.</p>
 
 <p>Stage/task failures can occur for a number of reasons, so it is
 recommended to look at the YARN application error logs.</p>
+
+<h5><strong>1. Long serialization/deserialization time</strong></h5>
+<p>
+    Long serialization/deserialization time can be caused by many reasons, including:
+<ul>
+    <li>using a inefficient serializer (which should also get signalled by ConfigurationHeuristics)</li>
+    <li>serialization/deserialization of unnecessary data</li>
+    <li>inefficient shuffle algorithm</li>
+</ul>
+</p>
