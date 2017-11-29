@@ -20,7 +20,7 @@ import com.linkedin.drelephant.analysis._
 import com.linkedin.drelephant.configurations.heuristic.HeuristicConfigurationData
 import com.linkedin.drelephant.math.Statistics
 import com.linkedin.drelephant.spark.data.SparkApplicationData
-import com.linkedin.drelephant.spark.fetchers.statusapiv1.{ExecutorSummary, StageData}
+import com.linkedin.drelephant.spark.fetchers.statusapiv1.{ExecutorSummary, StageData, TaskData, TaskMetrics}
 import org.apache.spark.status.api.v1.StageStatus
 
 import scala.collection.JavaConverters
@@ -83,6 +83,11 @@ class StagesHeuristic(private val heuristicConfigurationData: HeuristicConfigura
     def formatStageWithLongRuntime(stageData: StageData, runtime: Long): String =
       f"stage ${stageData.stageId}, attempt ${stageData.attemptId} (runtime: ${Statistics.readableTimespan(runtime)})"
 
+    def formatTaskWithTimeProportion(description: String, proportionSeverities: ProportionSeverities[(TaskData, TaskMetrics)]): String =
+        proportionSeverities.data
+          .map { case ((taskData, _), proportion, _) => f"task ${taskData.taskId}, attempt ${taskData.attempt} (${description} time proportion: ${proportion}%.1e)" }
+          .mkString("\n")
+
     val resultDetails = Seq(
       new HeuristicResultDetails("Spark completed stages count", evaluator.numCompletedStages.toString),
       new HeuristicResultDetails("Spark failed stages count", evaluator.numFailedStages.toString),
@@ -94,8 +99,17 @@ class StagesHeuristic(private val heuristicConfigurationData: HeuristicConfigura
       new HeuristicResultDetails(
         "Spark stages with long average executor runtimes",
         formatStagesWithLongAverageExecutorRuntimes(evaluator.stagesWithLongAverageExecutorRuntimes)
+      ),
+      new HeuristicResultDetails(
+        "Spark tasks with long serialization time",
+        formatTaskWithTimeProportion("serialization", evaluator.taskSerializationTimeProportionAndSeverities.moreSevereThan(Severity.MODERATE))
+      ),
+      new HeuristicResultDetails(
+        "Spark tasks with long deserialization time",
+        formatTaskWithTimeProportion("deserialization", evaluator.taskDeserializationTimeProportionAndSeverities.moreSevereThan(Severity.MODERATE))
       )
     )
+
     val result = new HeuristicResult(
       heuristicConfigurationData.getClassName,
       heuristicConfigurationData.getHeuristicName,
@@ -177,7 +191,8 @@ object StagesHeuristic {
       stagesAndAverageExecutorRuntimeSeverities
         .collect { case (stageData, runtime, severity) if severity.getValue > Severity.MODERATE.getValue => (stageData, runtime) }
 
-    lazy val severity: Severity = Severity.max((stageFailureRateSeverity +: (taskFailureRateSeverities ++ runtimeSeverities ++ taskSerializationTimeProportionSeverities ++ taskDeserializationTimeProportionSeverities)): _*)
+    lazy val severity: Severity = Severity.max((stageFailureRateSeverity +: (taskFailureRateSeverities ++ runtimeSeverities
+      ++ taskSerializationTimeProportionAndSeverities.severities ++ taskDeserializationTimeProportionAndSeverities.severities)): _*)
 
     private lazy val stageFailureRateSeverityThresholds = stagesHeuristic.stageFailureRateSeverityThresholds
 
@@ -213,17 +228,26 @@ object StagesHeuristic {
     private lazy val executorInstances: Int =
       appConfigurationProperties.get(SPARK_EXECUTOR_INSTANCES_KEY).map(_.toInt).getOrElse(executorSummaries.size)
 
-    private lazy val taskSerDeSerTimeProportionSeverities: Seq[(Severity, Severity)] = for {
+    private lazy val taskMetrics: Seq[(TaskData, TaskMetrics)] = for {
       stageData <- stageDatas
       tasks <- stageData.tasks.toIterable
-      value <- tasks.values
-      metrics <- value.taskMetrics
-      serProportion = taskSerializationTimeProportionSeverityThresholds.severityOf(metrics.resultSerializationTime / metrics.executorRunTime.toFloat)
-      deserProportion = taskDeserializationTimeProportionSeverityThresholds.severityOf(metrics.executorDeserializeTime / metrics.executorRunTime.toFloat)
-    } yield (serProportion, deserProportion)
+      taskValue <- tasks.values
+      metrics <- taskValue.taskMetrics
+    } yield (taskValue, metrics)
 
-    private lazy val taskSerializationTimeProportionSeverities: Seq[Severity] = taskSerDeSerTimeProportionSeverities.map(_._1)
-    private lazy val taskDeserializationTimeProportionSeverities: Seq[Severity] = taskSerDeSerTimeProportionSeverities.map(_._2)
+    lazy val taskSerializationTimeProportionAndSeverities: ProportionSeverities[(TaskData, TaskMetrics)] =
+      ProportionSeverities.apply[(TaskData, TaskMetrics)](
+        taskMetrics,
+        elem => elem._2.resultSerializationTime / elem._2.executorRunTime.toFloat,
+        taskSerializationTimeProportionSeverityThresholds
+      )
+
+    lazy val taskDeserializationTimeProportionAndSeverities: ProportionSeverities[(TaskData, TaskMetrics)] =
+      ProportionSeverities.apply[(TaskData, TaskMetrics)](
+        taskMetrics,
+        elem => elem._2.executorDeserializeTime / elem._2.executorRunTime.toFloat,
+        taskDeserializationTimeProportionSeverityThresholds
+      )
 
     private def taskFailureRateAndSeverityOf(stageData: StageData): (Double, Severity) = {
       val taskFailureRate = taskFailureRateOf(stageData).getOrElse(0.0D)
@@ -253,4 +277,21 @@ object StagesHeuristic {
     Duration(minutesSeverityThresholds.critical.longValue, duration.MINUTES).toMillis,
     minutesSeverityThresholds.ascending
   )
+}
+
+case class ProportionSeverities[A](data: Seq[(A, Float, Severity)]) {
+  def severities: Seq[Severity] = data.map(_._3)
+
+  def moreSevereThan(severity: Severity = Severity.MODERATE) = ProportionSeverities(data.filter(_._3.getValue > severity.getValue))
+}
+
+object ProportionSeverities {
+  def apply[A](metrics: Seq[A], ProportionExtractor: A => Float, thresholds: SeverityThresholds): ProportionSeverities[A] =
+    new ProportionSeverities[A](
+      metrics.map { elem =>
+        val proportion = ProportionExtractor(elem)
+        val severity = thresholds.severityOf(proportion)
+        (elem, proportion, severity)
+      }
+    )
 }
