@@ -286,10 +286,10 @@ case class ProportionSeverities[A](data: Seq[(A, Float, Severity)]) {
 }
 
 object ProportionSeverities {
-  def apply[A](metrics: Seq[A], ProportionExtractor: A => Float, thresholds: SeverityThresholds): ProportionSeverities[A] =
+  def apply[A](metrics: Seq[A], proportionExtractor: A => Float, thresholds: SeverityThresholds): ProportionSeverities[A] =
     new ProportionSeverities[A](
       metrics.map { elem =>
-        val proportion = ProportionExtractor(elem)
+        val proportion = proportionExtractor(elem)
         val severity = thresholds.severityOf(proportion)
         (elem, proportion, severity)
       }
