@@ -235,17 +235,17 @@ object StagesHeuristic {
       metrics <- taskValue.taskMetrics
     } yield (taskValue, metrics)
 
-    lazy val taskSerializationTimeProportionAndSeverities: ProportionSeverities[(TaskData, TaskMetrics)] =
-      ProportionSeverities.apply[(TaskData, TaskMetrics)](
+    lazy val taskSerializationTimeProportionAndSeverities =
+      ProportionSeverities(
         taskMetrics,
-        elem => elem._2.resultSerializationTime / elem._2.executorRunTime.toFloat,
+        (elem: (TaskData, TaskMetrics)) => elem._2.resultSerializationTime / elem._2.executorRunTime.toFloat,
         taskSerializationTimeProportionSeverityThresholds
       )
 
-    lazy val taskDeserializationTimeProportionAndSeverities: ProportionSeverities[(TaskData, TaskMetrics)] =
-      ProportionSeverities.apply[(TaskData, TaskMetrics)](
+    lazy val taskDeserializationTimeProportionAndSeverities =
+      ProportionSeverities(
         taskMetrics,
-        elem => elem._2.executorDeserializeTime / elem._2.executorRunTime.toFloat,
+        (elem: (TaskData, TaskMetrics))=> elem._2.executorDeserializeTime / elem._2.executorRunTime.toFloat,
         taskDeserializationTimeProportionSeverityThresholds
       )
 
