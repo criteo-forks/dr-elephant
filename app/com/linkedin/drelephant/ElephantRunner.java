@@ -17,6 +17,7 @@
 package com.linkedin.drelephant;
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
+
 import com.linkedin.drelephant.analysis.AnalyticJob;
 import com.linkedin.drelephant.analysis.AnalyticJobGenerator;
 import com.linkedin.drelephant.analysis.AnalyticJobGeneratorHadoop2;
@@ -27,16 +28,15 @@ import com.linkedin.drelephant.security.HadoopSecurity;
 import com.linkedin.drelephant.util.Utils;
 import controllers.MetricsController;
 import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.security.PrivilegedAction;
 import java.util.List;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import com.linkedin.drelephant.util.Utils;
 import models.AppResult;
+
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.log4j.Logger;
@@ -216,19 +216,29 @@ public class ElephantRunner implements Runnable {
         logger.info(ExceptionUtils.getStackTrace(e));
 
         Thread.currentThread().interrupt();
+      } catch (TimeoutException e) {
+        logger.warn("Timed out while fetching data. Exception message is: " + e.getMessage());
+        jobFate();
       } catch (Exception e) {
         logger.error(e.getMessage());
         logger.error(ExceptionUtils.getStackTrace(e));
+        jobFate();
+      }
+    }
 
-        if (_analyticJob != null && _analyticJob.retry()) {
-          logger.error("Add analytic job id [" + _analyticJob.getAppId() + "] into the retry list.");
-          _analyticJobGenerator.addIntoRetries(_analyticJob);
-        } else {
-          if (_analyticJob != null) {
-            MetricsController.markSkippedJob();
-            logger.error("Drop the analytic job. Reason: reached the max retries for application id = ["
-                    + _analyticJob.getAppId() + "].");
-          }
+    private void jobFate () {
+      if (_analyticJob != null && _analyticJob.retry()) {
+        logger.warn("Add analytic job id [" + _analyticJob.getAppId() + "] into the retry list.");
+        _analyticJobGenerator.addIntoRetries(_analyticJob);
+      } else if (_analyticJob != null && _analyticJob.isSecondPhaseRetry()) {
+        //Putting the job into a second retry queue which fetches jobs after some interval. Some spark jobs may need more time than usual to process, hence the queue.
+        logger.warn("Add analytic job id [" + _analyticJob.getAppId() + "] into the second retry list.");
+        _analyticJobGenerator.addIntoSecondRetryQueue(_analyticJob);
+      } else {
+        if (_analyticJob != null) {
+          MetricsController.markSkippedJob();
+          logger.error("Drop the analytic job. Reason: reached the max retries for application id = ["
+                  + _analyticJob.getAppId() + "].");
         }
       }
     }
