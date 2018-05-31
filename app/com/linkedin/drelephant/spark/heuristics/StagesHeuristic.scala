@@ -20,8 +20,7 @@ import com.linkedin.drelephant.analysis._
 import com.linkedin.drelephant.configurations.heuristic.HeuristicConfigurationData
 import com.linkedin.drelephant.math.Statistics
 import com.linkedin.drelephant.spark.data.SparkApplicationData
-import com.linkedin.drelephant.spark.fetchers.statusapiv1.{ExecutorSummary, StageData, TaskData, TaskMetrics}
-import org.apache.spark.status.api.v1.StageStatus
+import com.linkedin.drelephant.spark.fetchers.statusapiv1.{ExecutorSummary, StageData, StageStatus, TaskData, TaskMetrics}
 
 import scala.collection.JavaConverters
 import scala.concurrent.duration
@@ -37,7 +36,6 @@ import scala.concurrent.duration.Duration
 class StagesHeuristic(private val heuristicConfigurationData: HeuristicConfigurationData)
     extends Heuristic[SparkApplicationData] {
   import StagesHeuristic._
-
   import JavaConverters._
 
   val stageFailureRateSeverityThresholds: SeverityThresholds =

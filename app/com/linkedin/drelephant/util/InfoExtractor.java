@@ -17,9 +17,13 @@
 package com.linkedin.drelephant.util;
 
 import com.linkedin.drelephant.analysis.HadoopApplicationData;
+import com.linkedin.drelephant.clients.WorkflowClient;
 import com.linkedin.drelephant.configurations.scheduler.SchedulerConfiguration;
 import com.linkedin.drelephant.configurations.scheduler.SchedulerConfigurationData;
-import com.linkedin.drelephant.exceptions.WorkflowClient;
+
+import com.linkedin.drelephant.tez.data.TezApplicationData;
+import com.linkedin.drelephant.clients.WorkflowClient;
+
 import com.linkedin.drelephant.mapreduce.data.MapReduceApplicationData;
 import com.linkedin.drelephant.schedulers.Scheduler;
 import com.linkedin.drelephant.spark.data.SparkApplicationData;
@@ -116,6 +120,9 @@ public class InfoExtractor {
     } else if ( data instanceof SparkApplicationData) {
       properties = retrieveSparkProperties((SparkApplicationData) data);
     }
+    else if(data instanceof TezApplicationData){
+      properties = retrieveTezProperties((TezApplicationData) data);
+    }
     Scheduler scheduler = getSchedulerInstance(data.getAppId(), properties);
 
     if (scheduler == null) {
@@ -163,6 +170,10 @@ public class InfoExtractor {
    * @return the retrieve mapreduce properties
    */
   public static Properties retrieveMapreduceProperties(MapReduceApplicationData appData) {
+    return appData.getConf();
+  }
+
+  public static Properties retrieveTezProperties(TezApplicationData appData) {
     return appData.getConf();
   }
 
@@ -254,14 +265,10 @@ public class InfoExtractor {
    * @return The Workflow cient based on the workflow url
    */
   public static WorkflowClient getWorkflowClientInstance(String scheduler, String url) {
-    if (!getSchedulersConfiguredForException().contains(scheduler)) {
-      throw new RuntimeException(String.format("Scheduler %s is not configured for Exception fingerprinting ", scheduler));
-    }
-
     for (SchedulerConfigurationData data : _configuredSchedulers) {
       if (data.getSchedulerName().equals(scheduler)) {
         try {
-          String workflowClass = data.getParamMap().get("exception_class");
+          String workflowClass = data.getParamMap().get("workflow_client");
           Class<?> schedulerClass = Class.forName(workflowClass);
           Object instance = schedulerClass.getConstructor(String.class).newInstance(url);
           if (!(instance instanceof WorkflowClient)) {

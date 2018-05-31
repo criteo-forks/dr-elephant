@@ -85,7 +85,12 @@ public final class Utils {
     InputStream instream = null;
     logger.info("Loading configuration file " + filePath);
 
-    instream = Scala.orNull(Play.current().resourceAsStream(filePath));
+    try {
+      instream = Scala.orNull(Play.current().resourceAsStream(filePath));
+    } catch (RuntimeException e) {
+      // When running tests, we don't have a Play instance running
+      instream = ClassLoader.getSystemClassLoader().getResourceAsStream(filePath);
+    }
 
     if (instream == null) {
       logger.info("Configuation file not present in classpath. File:  " + filePath);

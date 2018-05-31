@@ -16,12 +16,11 @@
 
 package com.linkedin.drelephant.spark.fetchers
 
-import scala.async.Async
+import java.util.concurrent.TimeoutException
+
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration.{Duration, SECONDS}
-import scala.util.{Try, Success, Failure}
-import scala.util.control.NonFatal
-
+import scala.util.{Failure, Success, Try}
 import com.linkedin.drelephant.analysis.{AnalyticJob, ElephantFetcher}
 import com.linkedin.drelephant.configurations.fetcher.FetcherConfigurationData
 import com.linkedin.drelephant.spark.data.SparkApplicationData
@@ -35,9 +34,9 @@ import org.apache.spark.SparkConf
   * A fetcher that gets Spark-related data from a combination of the Spark monitoring REST API and Spark event logs.
   */
 class SparkFetcher(fetcherConfigurationData: FetcherConfigurationData)
-    extends ElephantFetcher[SparkApplicationData] {
+  extends ElephantFetcher[SparkApplicationData] {
+
   import SparkFetcher._
-  import Async.{async, await}
   import ExecutionContext.Implicits.global
 
   private val logger: Logger = Logger.getLogger(classOf[SparkFetcher])
@@ -79,7 +78,7 @@ class SparkFetcher(fetcherConfigurationData: FetcherConfigurationData)
   override def fetchData(analyticJob: AnalyticJob): SparkApplicationData = {
     doFetchData(analyticJob) match {
       case Success(data) => data
-      case Failure(e) => throw e
+      case Failure(e) => throw new TimeoutException()
     }
   }
 
@@ -94,7 +93,7 @@ class SparkFetcher(fetcherConfigurationData: FetcherConfigurationData)
         Success(data)
       },
       e => {
-        logger.error(s"Failed fetching data for ${appId}", e)
+        logger.warn(s"Failed fetching data for ${appId}." + " I will retry after some time! " + "Exception Message is: " + e.getMessage)
         Failure(e)
       }
     )
@@ -102,7 +101,7 @@ class SparkFetcher(fetcherConfigurationData: FetcherConfigurationData)
 
   private def doFetchSparkApplicationData(analyticJob: AnalyticJob): Future[SparkApplicationData] = {
     if (shouldProcessLogsLocally) {
-      async {
+      Future {
         sparkRestClient.fetchEventLogAndParse(analyticJob.getAppId)
       }
     } else {
@@ -110,21 +109,21 @@ class SparkFetcher(fetcherConfigurationData: FetcherConfigurationData)
     }
   }
 
-  private def doFetchDataUsingRestAndLogClients(analyticJob: AnalyticJob): Future[SparkApplicationData] = async {
+  private def doFetchDataUsingRestAndLogClients(analyticJob: AnalyticJob): Future[SparkApplicationData] = Future {
     val appId = analyticJob.getAppId
-    val restDerivedData = await(sparkRestClient.fetchData(appId, eventLogSource == EventLogSource.Rest))
+    val restDerivedData = Await.result(sparkRestClient.fetchData(appId, eventLogSource == EventLogSource.Rest), DEFAULT_TIMEOUT)
 
     val logDerivedData = eventLogSource match {
       case EventLogSource.None => None
       case EventLogSource.Rest => restDerivedData.logDerivedData
       case EventLogSource.WebHdfs =>
-        val lastAttemptId = restDerivedData.applicationInfo.attempts.maxBy { _.startTime }.attemptId
-        Some(await(sparkLogClient.fetchData(appId, lastAttemptId)))
+        val lastAttemptId = restDerivedData.applicationInfo.attempts.maxBy {
+          _.startTime
+        }.attemptId
+        Some(Await.result(sparkLogClient.fetchData(appId, lastAttemptId), DEFAULT_TIMEOUT))
     }
-
     SparkApplicationData(appId, restDerivedData, logDerivedData)
   }
-
 }
 
 object SparkFetcher {
@@ -132,15 +131,19 @@ object SparkFetcher {
   sealed trait EventLogSource
 
   object EventLogSource {
+
     /** Fetch event logs through REST API. */
     case object Rest extends EventLogSource
+
     /** Fetch event logs through WebHDFS. */
     case object WebHdfs extends EventLogSource
+
     /** Event logs are not available. */
     case object None extends EventLogSource
+
   }
 
   val SPARK_EVENT_LOG_ENABLED_KEY = "spark.eventLog.enabled"
-  val DEFAULT_TIMEOUT = Duration(60, SECONDS)
+  val DEFAULT_TIMEOUT = Duration(5, SECONDS)
   val LOG_LOCATION_URI_XML_FIELD = "event_log_location_uri"
 }
