@@ -40,7 +40,7 @@ public class GarmadonTransferHeuristic {
             String yarn_app_result_id = row.getString("yarn_app_result_id");
             AppResult appResult = Ebean.find(AppResult.class, yarn_app_result_id);
             if (appResult != null) {
-                LOGGER.debug("Insert data for {}", yarn_app_result_id);
+                LOGGER.info("Insert data for {}", yarn_app_result_id);
                 insertData(appResult, yarn_app_result_id);
             }
         }
