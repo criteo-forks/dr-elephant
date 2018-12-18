@@ -79,7 +79,6 @@ public class GarmadonTransferHeuristic {
             }
         } catch (Exception e) {
             LOGGER.error("Unexpected error occurred while reading garmadon heuristics", e);
-            throw new RuntimeException(e);
         }
     }
 

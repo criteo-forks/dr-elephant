@@ -200,7 +200,26 @@ public class ElephantRunner implements Runnable {
     final long garmadonTransfertIntervalSecond = Utils.getNonNegativeLong(configuration,
             GARMADON_TRANSFER_INTERVAL_SECOND_KEY, 60);
 
-    _garmadonTransferScheduler = new ScheduledThreadPoolExecutor(1);
+    final ThreadFactory factory = new ThreadFactory() {
+
+      @Override
+      public Thread newThread(Runnable target) {
+        final Thread garmadonThread = new Thread(target);
+        garmadonThread.setName("GARMADON - Heuristic Thread");
+        garmadonThread.setDaemon(true);
+        garmadonThread.setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+
+          @Override
+          public void uncaughtException(Thread t, Throwable e) {
+            logger.error("Uncaught Exception", e);
+          }
+
+        });
+        return garmadonThread;
+      }
+    };
+
+    _garmadonTransferScheduler = new ScheduledThreadPoolExecutor(1, factory);
 
     _garmadonTransferScheduler.scheduleAtFixedRate(new Runnable() {
       @Override
