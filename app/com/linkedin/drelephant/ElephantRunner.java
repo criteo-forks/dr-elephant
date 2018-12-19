@@ -171,6 +171,27 @@ public class ElephantRunner implements Runnable {
     }
   }
 
+  private ThreadFactory createUncaughtThreadFactory(final String name) {
+    return new ThreadFactory() {
+
+      @Override
+      public Thread newThread(Runnable target) {
+        final Thread garmadonThread = new Thread(target);
+        garmadonThread.setName(name);
+        garmadonThread.setDaemon(true);
+        garmadonThread.setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+
+          @Override
+          public void uncaughtException(Thread t, Throwable e) {
+            logger.error("Uncaught Exception", e);
+          }
+
+        });
+        return garmadonThread;
+      }
+    };
+  }
+
   private void setupAppResultPurge() {
 
     Configuration configuration = ElephantContext.instance().getGeneralConf();
@@ -180,7 +201,10 @@ public class ElephantRunner implements Runnable {
     final int purgeBatchSize = Utils.getNonNegativeInt(configuration, PURGE_BATCH_SIZE_KEY, 100);
 
     if (retentionPeriodDay > 0) {
-      _purgeScheduler = new ScheduledThreadPoolExecutor(1);
+
+      final ThreadFactory factory = createUncaughtThreadFactory("DrElephant - Purge Thread");
+
+      _purgeScheduler = new ScheduledThreadPoolExecutor(1, factory);
       //Start purge with a little delay allowing application start
       _purgeScheduler.scheduleAtFixedRate(new Runnable() {
         @Override
@@ -200,24 +224,7 @@ public class ElephantRunner implements Runnable {
     final long garmadonTransfertIntervalSecond = Utils.getNonNegativeLong(configuration,
             GARMADON_TRANSFER_INTERVAL_SECOND_KEY, 60);
 
-    final ThreadFactory factory = new ThreadFactory() {
-
-      @Override
-      public Thread newThread(Runnable target) {
-        final Thread garmadonThread = new Thread(target);
-        garmadonThread.setName("GARMADON - Heuristic Thread");
-        garmadonThread.setDaemon(true);
-        garmadonThread.setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
-
-          @Override
-          public void uncaughtException(Thread t, Throwable e) {
-            logger.error("Uncaught Exception", e);
-          }
-
-        });
-        return garmadonThread;
-      }
-    };
+    final ThreadFactory factory = createUncaughtThreadFactory("GARMADON - Heuristic Thread");
 
     _garmadonTransferScheduler = new ScheduledThreadPoolExecutor(1, factory);
 
