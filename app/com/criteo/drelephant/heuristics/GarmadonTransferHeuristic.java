@@ -30,11 +30,10 @@ public class GarmadonTransferHeuristic {
             + " WHERE yarn_app_result_id = :yarn_app_result_id";
     private static final String SELECT_HEURISTIC_RESULT_DETAILS_SQL = "SELECT * FROM " + HEURISTIC_RESULT_DETAILS_TABLENAME
             + " WHERE yarn_app_heuristic_result_id = :yarn_app_heuristic_result_id";
-    private static final String DELETE_HEURISTIC_RESULT_DETAILS_SQL = "DELETE FROM " + HEURISTIC_RESULT_DETAILS_TABLENAME
-            + " WHERE yarn_app_heuristic_result_id in ("
-            + " SELECT id from " + HEURISTIC_RESULT_TABLENAME
-            + " WHERE yarn_app_result_id = :yarn_app_result_id)";
-
+    private static final String DELETE_HEURISTIC_RESULT_DETAILS_SQL = "DELETE t1 FROM " + HEURISTIC_RESULT_DETAILS_TABLENAME + " t1"
+            + " INNER JOIN " + HEURISTIC_RESULT_TABLENAME + " t2"
+            + " ON t1.yarn_app_heuristic_result_id = t2.id"
+            + " WHERE t2.yarn_app_result_id = :yarn_app_result_id";
     private static final String UPDATE_READ_TIMES_APP_RESULT_SQL = "UPDATE " + HEURISTIC_RESULT_TABLENAME
             + " SET read_times = read_times + 1"
             + " WHERE yarn_app_result_id = :yarn_app_result_id";
