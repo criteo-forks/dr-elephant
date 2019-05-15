@@ -99,7 +99,9 @@ object Dependencies {
     "org.jmockit" % "jmockit" % "1.23" % Test,
     "org.scala-lang.modules" %% "scala-async" % "0.9.5",
     "org.apache.httpcomponents" % "httpclient" % "4.5.2",
+    "com.wix" % "wix-embedded-mysql" % "4.2.0" % Test,
     "org.scalatest" %% "scalatest" % "3.0.0" % Test
+
 
   ) :+ sparkExclusion :+ sparkSql
 
