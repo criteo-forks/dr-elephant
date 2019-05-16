@@ -17,6 +17,7 @@
 package models;
 
 import com.fasterxml.jackson.annotation.JsonManagedReference;
+
 import java.util.List;
 import javax.persistence.*;
 
@@ -54,7 +55,7 @@ public class AppHeuristicResult extends Model {
   @JsonIgnore
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
-  public int id;
+  public long id;
 
   @JsonBackReference
   @ManyToOne(cascade = CascadeType.ALL)
