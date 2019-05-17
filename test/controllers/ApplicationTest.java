@@ -17,6 +17,8 @@
 package controllers;
 
 import com.avaje.ebean.Query;
+import com.wix.mysql.EmbeddedMysql;
+import com.wix.mysql.config.MysqldConfig;
 import models.AppResult;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -27,14 +29,27 @@ import play.test.Helpers;
 import views.html.page.homePage;
 import views.html.results.searchResults;
 
+import java.net.ServerSocket;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.wix.mysql.EmbeddedMysql.anEmbeddedMysql;
+import static com.wix.mysql.ScriptResolver.classPathScript;
+import static com.wix.mysql.config.Charset.UTF8;
+import static com.wix.mysql.config.MysqldConfig.aMysqldConfig;
+import static com.wix.mysql.distribution.Version.v5_7_latest;
+import static common.TestConstants.*;
+import static common.TestConstants.APPLY_EVOLUTIONS_DEFAULT_VALUE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static play.test.Helpers.fakeApplication;
 
 public class ApplicationTest {
+
+
+  public static FakeApplication app;
+  private static EmbeddedMysql mysqld;
 
   @Test
   public void testRenderHomePage() {
@@ -53,17 +68,47 @@ public class ApplicationTest {
     assertTrue(html.body().contains("Latest analysis"));
   }
 
-  public static FakeApplication app;
-
   @BeforeClass
   public static void startApp() {
-    app = Helpers.fakeApplication(Helpers.inMemoryDatabase());
-    Helpers.start(app);
+
+    try {
+      // Get one free port
+      ServerSocket s = new ServerSocket(0);
+      int port = s.getLocalPort();
+
+      // Config Embedded Mysql
+      MysqldConfig config = aMysqldConfig(v5_7_latest)
+          .withCharset(UTF8)
+          .withPort(port)
+          .withUser("drelephant", "drelephant")
+          .build();
+
+      s.close();
+
+      // Start Mysql DB
+      mysqld = anEmbeddedMysql(config)
+          .addSchema("drelephant")
+          .start();
+
+      Map<String, String> dbConn = new HashMap<String, String>();
+      dbConn.put(DB_DEFAULT_DRIVER_KEY, "com.mysql.jdbc.Driver");
+      dbConn.put(DB_DEFAULT_URL_KEY, "mysql://drelephant:drelephant@localhost:" + port + "/drelephant");
+      dbConn.put(EVOLUTION_PLUGIN_KEY, EVOLUTION_PLUGIN_VALUE);
+      dbConn.put(APPLY_EVOLUTIONS_DEFAULT_KEY, APPLY_EVOLUTIONS_DEFAULT_VALUE);
+
+      app = Helpers.fakeApplication(dbConn);
+
+      Helpers.start(app);
+
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
   }
 
   @AfterClass
   public static void stopApp() {
     Helpers.stop(app);
+    mysqld.stop();
   }
 
   @Test

@@ -18,7 +18,11 @@ package rest;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.linkedin.drelephant.util.Utils;
+import com.wix.mysql.EmbeddedMysql;
+import com.wix.mysql.config.MysqldConfig;
 import common.DBTestUtil;
+
+import java.net.ServerSocket;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -26,6 +30,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -36,6 +42,11 @@ import play.GlobalSettings;
 import play.libs.WS;
 import play.test.FakeApplication;
 
+import static com.wix.mysql.EmbeddedMysql.anEmbeddedMysql;
+import static com.wix.mysql.ScriptResolver.classPathScript;
+import static com.wix.mysql.config.Charset.UTF8;
+import static com.wix.mysql.config.MysqldConfig.aMysqldConfig;
+import static com.wix.mysql.distribution.Version.v5_7_latest;
 import static common.DBTestUtil.*;
 import static common.TestConstants.*;
 import static org.junit.Assert.assertTrue;
@@ -58,24 +69,56 @@ public class RestAPITest {
 
   private static final Logger logger = LoggerFactory.getLogger(RestAPITest.class);
   private static FakeApplication fakeApp;
+  private EmbeddedMysql mysqld;
+
+  private void initDB() {
+    try {
+      // Get one free port
+      ServerSocket s = new ServerSocket(0);
+      int port = s.getLocalPort();
+
+      // Config Embedded Mysql
+      MysqldConfig config = aMysqldConfig(v5_7_latest)
+          .withCharset(UTF8)
+          .withPort(port)
+          .withUser("drelephant", "drelephant")
+          .build();
+
+      s.close();
+
+      // Start Mysql DB
+      mysqld = anEmbeddedMysql(config)
+          .addSchema("drelephant")
+          .start();
+
+      Map<String, String> dbConn = new HashMap<String, String>();
+      dbConn.put(DB_DEFAULT_DRIVER_KEY, "com.mysql.jdbc.Driver");
+      dbConn.put(DB_DEFAULT_URL_KEY, "mysql://drelephant:drelephant@localhost:" + port + "/drelephant");
+      dbConn.put(EVOLUTION_PLUGIN_KEY, EVOLUTION_PLUGIN_VALUE);
+      dbConn.put(APPLY_EVOLUTIONS_DEFAULT_KEY, APPLY_EVOLUTIONS_DEFAULT_VALUE);
+
+      GlobalSettings gs = new GlobalSettings() {
+        @Override
+        public void onStart(Application app) {
+            logger.info("Starting FakeApplication");
+        }
+    };
+
+      fakeApp = fakeApplication(dbConn);
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
 
   @Before
   public void setup() {
-    Map<String, String> dbConn = new HashMap<String, String>();
-    dbConn.put(DB_DEFAULT_DRIVER_KEY, DB_DEFAULT_DRIVER_VALUE);
-    dbConn.put(DB_DEFAULT_URL_KEY, DB_DEFAULT_URL_VALUE);
-    dbConn.put(EVOLUTION_PLUGIN_KEY, EVOLUTION_PLUGIN_VALUE);
-    dbConn.put(APPLY_EVOLUTIONS_DEFAULT_KEY, APPLY_EVOLUTIONS_DEFAULT_VALUE);
-
-    GlobalSettings gs = new GlobalSettings() {
-      @Override
-      public void onStart(Application app) {
-        logger.info("Starting FakeApplication");
-      }
-    };
-
-    fakeApp = fakeApplication(dbConn, gs);
+      initDB();
   }
+
+  @After
+  public void setDown() {
+        mysqld.stop();
+    }
 
   /**
    * <p>
@@ -813,10 +856,6 @@ public class RestAPITest {
   }
 
   private void populateTestData() {
-    try {
-      initDB();
-    } catch (Exception e) {
-      e.printStackTrace();
-    }
+    mysqld.executeScripts("drelephant", classPathScript("test-init.sql"));
   }
 }
